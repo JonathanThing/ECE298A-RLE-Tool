@@ -12,10 +12,10 @@ Workflow:
 
 def main():
     print("Select operation:")
-    print("1: Extract frames and audio")
-    print("2: Process frames")
-    print("3: Create video")
-    print("4: Generate RLE binary file")
+    print("1: Extract frames and audio from video")
+    print("2: Process frames into RLE ")
+    print("3: Create video preview from modified frames (Optional)")
+    print("4: Generate RLE binary file from modified frames")
     operation = input("Enter 1, 2, 3, or 4: ").strip()
 
     if operation == "1":
@@ -27,8 +27,9 @@ def main():
         quant_mode = input("Enter 1 or 2: ").strip()
         bw_mode = (quant_mode == "2")
 
-        extract_frames(video_path, output_folder=constants.FRAMES_FOLDER, bw_mode=bw_mode)
         extract_audio(video_path, output_folder=constants.AUDIO_FOLDER)
+        extract_frames(video_path, output_folder=constants.FRAMES_FOLDER, bw_mode=bw_mode)
+
     elif operation == "2":
         print("Select colour mode:")
         print("1: Normal colour")
@@ -36,7 +37,7 @@ def main():
         quant_mode = input("Enter 1 or 2: ").strip()
         bw_mode = (quant_mode == "2")
 
-        # Ask user for similarity threshold
+        # Ask for similarity threshold
         from rle_codec import SIMILARITY_THRESHOLD
         print(f"Current similarity threshold: {SIMILARITY_THRESHOLD}")
         user_threshold = input("Enter similarity threshold (0.0-1.0, press Enter to keep default): ").strip()
@@ -49,8 +50,10 @@ def main():
                 print(f"Invalid input, using default. Error: {e}")
 
         process_all_frames_concurrent(bw_mode=bw_mode)
+
     elif operation == "3":
         create_video(input_frames_folder=constants.MODIFIED_FRAMES_FOLDER, input_audio_folder=constants.AUDIO_FOLDER, output_path="output_video.mp4")
+        
     elif operation == "4":
         print("Generate RLE binary file")
         

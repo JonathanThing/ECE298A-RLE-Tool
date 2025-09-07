@@ -8,8 +8,9 @@ from multiprocessing import cpu_count
 import constants
 import utils
 
-# Global similarity threshold for merging strips
-SIMILARITY_THRESHOLD = 0.7  # User can configure this value
+# Similarity threshold when merging strips
+SIMILARITY_THRESHOLD = 0.7 
+BW_MODE = True
 
 def verify_rle(frame_rle):
     for row in frame_rle:
@@ -19,162 +20,148 @@ def verify_rle(frame_rle):
     return True
 
 def set_rle_length(row_rle, index, new_length):
-    color = row_rle[index][0]
-    row_rle[index] = (color, new_length)
+    colour = row_rle[index][0]
+    row_rle[index] = (colour, new_length)
 
 def increment_rle_length(row_rle, index, increment):
-    color, current_length = row_rle[index]
-    row_rle[index] = (color, current_length + increment)
+    colour, current_length = row_rle[index]
+    row_rle[index] = (colour, current_length + increment)
 
-def enforce_rle_constraints(row_rle, bw_mode=False):
-    if bw_mode:
-        # TODO: Implement logic for black-and-white mode
-        pass
-    else:  # Handle color mode
-        # Step 1: Remove artifacts (strips < 3 pixels) by absorbing into neighbors
-        row_rle = remove_short_strips(row_rle)
-        
-        # Step 2: Enforce group constraints (every 6 strips sum to >= 36)
-        row_rle = enforce_group_constraints(row_rle)
-        
-        # Note: We don't trim to maintain total pixel count
-        # The borrowing system in extend_window_strips maintains conservation
-        
+def enforce_rle_constraints(row_rle):
+    row_rle = remove_short_strips(row_rle)
+    row_rle = enforce_group_constraints(row_rle)
     return row_rle
 
+# Remove strips less than 3 pixels
 def remove_short_strips(row_rle):
-    """Remove strips that are less than 3 pixels long by absorbing them into neighbors"""
-    i = len(row_rle) - 1
+    i = len(row_rle) - 1   # Start from right most strip and work leftwards
+
     while i >= 0:
-        color, length = row_rle[i]
+        colour, length = row_rle[i]
         if length < 3:
-            # If at the rightmost strip, only merge left
-            if i == len(row_rle) - 1:
+            if i == len(row_rle) - 1:                       # If at the rightmost strip, only merge left
                 increment_rle_length(row_rle, i-1, length)
                 del row_rle[i]
-                i -= 1
-                continue
-            # If at the leftmost strip, only merge right
-            elif i == 0:
+            elif i == 0:                                    # If at the leftmost strip, only merge right
                 increment_rle_length(row_rle, i+1, length)
                 del row_rle[i]
-                # No need to decrement i, as loop will exit
-                continue
-            # Otherwise, use normal logic
-            absorb_strip_into_neighbor(row_rle, i)
+            else:                                
+                absorb_strip_into_neighbor(row_rle, i)
             i -= 1
             continue
+
         i -= 1
     return row_rle
 
+# Absorb strip into a neighbor
 def absorb_strip_into_neighbor(row_rle, index):
-    """Absorb a short strip into the most appropriate neighbor"""
-    color, length = row_rle[index]
+    colour, length = row_rle[index]
     
+    merge_decision = None # -1 for left neighbour, 1 for right neighbour
+
+    # Check bounds
     left_available = index > 0
     right_available = index < len(row_rle) - 1
     
     if left_available and right_available:
-        left_color, left_length = row_rle[index-1]
-        right_color, right_length = row_rle[index+1]
+        left_colour, left_length = row_rle[index-1]
+        right_colour, right_length = row_rle[index+1]
         
-        # Priority 1: Merge with same color neighbor
-        if left_color == color:
-            increment_rle_length(row_rle, index-1, length)
-        elif right_color == color:
-            increment_rle_length(row_rle, index+1, length)
+        # Try to merge with same colour neighbor
+        if left_colour == colour:
+            merge_decision = -1
+        elif right_colour == colour:
+            merge_decision = 1
         else:
-            # Priority 2: Choose neighbor with similar color (minimal visual impact)
-            left_similarity = calculate_color_similarity(color, left_color)
-            right_similarity = calculate_color_similarity(color, right_color)
-            
-            # Only merge if similarity is high enough to avoid distortion
-            if left_similarity >= SIMILARITY_THRESHOLD and left_similarity >= right_similarity:
-                increment_rle_length(row_rle, index-1, length)
-            elif right_similarity >= SIMILARITY_THRESHOLD:
-                increment_rle_length(row_rle, index+1, length)
-            else:
-                # If neither neighbor is similar enough, merge with the longer one
-                # to minimize visual impact
-                if left_length >= right_length:
-                    increment_rle_length(row_rle, index-1, length)
-                else:
-                    increment_rle_length(row_rle, index+1, length)
+            if not BW_MODE: 
+                # Colour (can merge based on similarity)
+                left_similarity = calculate_colour_similarity(colour, left_colour)
+                right_similarity = calculate_colour_similarity(colour, right_colour)
                 
-    elif left_available:
-        increment_rle_length(row_rle, index-1, length)
-    elif right_available:
-        increment_rle_length(row_rle, index+1, length)
-    else:
-        # This shouldn't happen in normal cases, but if it does, keep the strip
-        return
+                # Merge if similar enough
+                if left_similarity >= SIMILARITY_THRESHOLD and left_similarity >= right_similarity: 
+                    merge_decision = -1
+                elif right_similarity >= SIMILARITY_THRESHOLD:
+                    merge_decision = 1
+                else:
+                    # If neither are similar enough, just merge with larger strip to reduce impact
+                    merge_target = -1 if left_length >= right_length else +1
+            else: 
+                # Black and White, Can only merge based on larger neighbour              
+                merge_target = -1 if left_length >= right_length else +1
+
+    elif left_available: # No other options
+        merge_decision = -1
+    elif right_available: # No other options
+        merge_decision = 1
+    else: # Not possible to merge
+        return 
+
+    increment_rle_length(row_rle, index + merge_decision, length)
     
     del row_rle[index]
 
-def calculate_color_similarity(color1, color2):
-    """Simple similarity based on how many bits differ"""
-    if color1 == color2:
+# Compare how similar two colours are by counting bits
+def calculate_colour_similarity(colour1, colour2):
+    if colour1 == colour2:
         return 1.0
     
-    # Count differing bits
-    xor_result = color1 ^ color2
-    differing_bits = bin(xor_result).count('1')
-    
-    # Normalize by total bits (8)
+    differing_bits = bin(colour1 ^ colour2).count('1')
     similarity = 1.0 - (differing_bits / 8.0)
     
     return similarity
 
+# Every consequtive 6 pixel strips must be at least 36 pixels long
 def enforce_group_constraints(row_rle):
-    """Ensure every group of 6 consecutive strips sums to at least 36 pixels"""
     i = 0
-    max_start = max(0, len(row_rle) - constants.GROUP_SIZE)
-    while i <= max_start:
+    last_strip = max(0, len(row_rle) - constants.GROUP_SIZE)
+
+    while i <= last_strip:
         window = row_rle[i:i+constants.GROUP_SIZE]
         total = sum([strip[1] for strip in window])
+
         if total < constants.MIN_GROUP_LENGTH:
             deficit = constants.MIN_GROUP_LENGTH - total
-            # Strategy 1: Try to merge similar colored strips in the window
+
+            # Try to overwite and merge strips in the window
             if try_merge_in_window(row_rle, i, deficit):
-                # Window may have changed, so recalculate max_start
-                max_start = max(0, len(row_rle) - constants.GROUP_SIZE)
-                continue  # Window changed, re-evaluate
-            # Strategy 2: Extend strips intelligently (distribute deficit)
+                last_strip = max(0, len(row_rle) - constants.GROUP_SIZE) # Update bounds
+                continue
+
+            # Distribute the deficit in the window
             extend_window_strips(row_rle, i, deficit)
         i += 1
     return row_rle
-
+ 
+# Try to merge same colour strips together by overwriting strips inbetween 
 def try_merge_in_window(row_rle, start_index, deficit):
-    """Try to merge strips with same color in the current window"""
     end_index = start_index + constants.GROUP_SIZE
     
     for i in range(start_index, min(end_index - 1, len(row_rle) - 1)):
         for j in range(i + 1, min(end_index, len(row_rle))):
             if row_rle[i][0] == row_rle[j][0]:
-                # Found same colors, check if merging helps
-                # Calculate cost of merging (pixels between that will change color)
+                # Calculate the number of pixels inbetween that will change
                 merge_cost = sum(row_rle[k][1] for k in range(i + 1, j))
                 
-                if merge_cost <= deficit:
-                    # Merge is worthwhile
+                # Want to minimize the amount of pixels changed, do not change more than nesscary
+                if merge_cost <= deficit: 
                     merge_strips_range(row_rle, i, j)
                     return True
     
     return False
 
+# Merge the two strips together, overwriting the strips inbetween them
 def merge_strips_range(row_rle, start, end):
-    """Merge strips from start to end index (inclusive)"""
     total_length = sum(row_rle[k][1] for k in range(start, end + 1))
-    color = row_rle[start][0]  # Use the first strip's color
-    
-    # Remove all strips in range and replace with merged strip
-    for _ in range(end - start):
-        del row_rle[start + 1]
-    
-    row_rle[start] = (color, total_length)
+    colour = row_rle[start][0]      
 
+    for i in range(end - start):
+        del row_rle[start + 1]
+
+    row_rle[start] = (colour, total_length)
+
+# Extends the strips inside the window until the deficit is met, taking from strips outside of the window 
 def extend_window_strips(row_rle, start_index, deficit):
-    """Extend strips in the window to meet minimum group length by borrowing from strips outside the window"""
     end_index = min(start_index + constants.GROUP_SIZE, len(row_rle))
     
     # Find strips outside the current window that can donate pixels
@@ -243,9 +230,6 @@ def extend_window_strips(row_rle, start_index, deficit):
     # If we still have deficit and couldn't borrow enough, we have to violate the total constraint
     # This should be rare if the original image has proper pixel count
 
-
-# def create_modified_image_optimized(original_pixels, rle_strips, width, height):
-    
 def process_frame(input_path, output_path, bw_mode):
     img = Image.open(input_path)
     if img.mode != 'RGB':
@@ -370,9 +354,9 @@ def write_frame_to_binary(frame_rle, output_file, audio_samples=None):
     audio_index = 0
     
     for row_index, row_rle in enumerate(frame_rle):
-        for color, length in row_rle:
-            # Write pixel instruction (3 bytes: length in upper 24 bits, color in lower 8 bits)
-            instruction_bytes = utils.pixel_instruction(length, color)
+        for colour, length in row_rle:
+            # Write pixel instruction (3 bytes: length in upper 24 bits, colour in lower 8 bits)
+            instruction_bytes = utils.pixel_instruction(length, colour)
             output_file.write(instruction_bytes)
         
         # Write audio sample after each row (480 rows total)
@@ -384,7 +368,7 @@ def write_frame_to_binary(frame_rle, output_file, audio_samples=None):
     # Write remaining 45 audio samples at the end of the frame
     # Total: 480 (after rows) + 45 (at end) = 525 audio samples per frame
     remaining_samples = 45
-    for _ in range(remaining_samples):
+    for i in range(remaining_samples):
         if audio_samples and audio_index < len(audio_samples):
             audio_instruction_bytes = utils.audio_instruction(audio_samples[audio_index])
             output_file.write(audio_instruction_bytes)

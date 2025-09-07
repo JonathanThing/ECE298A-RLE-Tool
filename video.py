@@ -61,6 +61,12 @@ def create_video(input_frames_folder=constants.MODIFIED_FRAMES_FOLDER, input_aud
         print("Modified frames folder does not exist. Cannot create video.")
         return
 
+    if os.path.exists(output_path):
+        response = input(f"Output file '{output_path}' already exists. Overwrite? (y/n): ").strip().lower()
+        if response == "y" or response == "yes":
+            print("Cancelled video creation.")
+            return
+
     cmd = [
         "ffmpeg",
         "-framerate", "60",
