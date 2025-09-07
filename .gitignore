@@ -2,4 +2,6 @@ output/
 input/
 __pycache__/
 venv
-
+*.mp4
+*.wav
+*.png
